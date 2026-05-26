@@ -16,9 +16,8 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Checkout
+        run: git clone --depth 1 https://github.com/${{ github.repository }}.git .
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,9 +38,8 @@ jobs:
     name: Frontend build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Checkout
+        run: git clone --depth 1 https://github.com/${{ github.repository }}.git .
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
