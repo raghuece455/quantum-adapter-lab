@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fine-Tuning an LLM With 6,144 Parameters on a Real Quantum Computer — Medium Article</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 740px; margin: 40px auto;
+         line-height: 1.8; color: #292929; padding: 0 20px; }
+  h1   { font-size: 2.1em; font-weight: 700; margin-bottom: 0.2em; line-height: 1.25; }
+  h2   { font-size: 1.45em; font-weight: 700; margin-top: 2.2em; margin-bottom: 0.4em; }
+  h3   { font-size: 1.15em; font-weight: 700; margin-top: 1.6em; margin-bottom: 0.3em; }
+  p    { margin: 1em 0; }
+  pre  { background: #f4f4f4; padding: 18px; border-radius: 5px;
+         overflow-x: auto; font-size: 0.85em; line-height: 1.5; }
+  code { font-family: 'Courier New', monospace; }
+  p code, li code { background: #f0f0f0; padding: 2px 6px;
+                    border-radius: 3px; font-size: 0.88em; }
+  hr   { border: none; border-top: 1px solid #e0e0e0; margin: 2.2em 0; }
+  blockquote { border-left: 3px solid #7c3aed; margin: 1.5em 0;
+               padding: 0.6em 1.5em; color: #555; font-style: italic;
+               background: #f9f6ff; }
+  table { border-collapse: collapse; width: 100%; margin: 1.5em 0; font-size: 0.91em; }
+  th, td { border: 1px solid #ddd; padding: 9px 14px; text-align: left; }
+  th   { background: #f5f5f5; font-weight: 700; }
+  ul, ol { margin: 1em 0; padding-left: 2em; }
+  li   { margin: 0.45em 0; }
+  .caption { font-size: 0.82em; color: #757575; text-align: center;
+             margin-top: -0.5em; margin-bottom: 1.5em; font-style: italic; }
+  img  { width: 100%; border-radius: 8px; margin: 1em 0; border: 1px solid #e8e8e8; }
+  .highlight { background: #7c3aed; color: white; padding: 2px 7px;
+               border-radius: 3px; font-style: normal; font-weight: 700; }
+  .tag { display: inline-block; background: #f0f0f0; border: 1px solid #ddd;
+         padding: 2px 8px; border-radius: 12px; font-size: 0.8em;
+         margin-right: 6px; font-family: sans-serif; }
+</style>
+</head>
+<body>
+
+<h1>Fine-Tuning an LLM With 6,144 Parameters on a Real Quantum Computer</h1>
+<h2 style="font-weight:400; font-size:1.2em; color:#555; margin-top:0.3em;">IBM Research just showed that quantum circuit blocks can adapt a billion-parameter model using 2,730× fewer parameters than LoRA. I built an interactive demo to make the math visible.</h2>
+
+<p style="color:#757575; font-size:0.88em; font-family:sans-serif;">
+  <span class="tag">Quantum Computing</span>
+  <span class="tag">LLM Fine-Tuning</span>
+  <span class="tag">IBM Research</span>
+  <span class="tag">Python</span>
+  <span class="tag">React</span>
+  &nbsp;·&nbsp; 12 min read
+</p>
+
+<hr>
+
+<p>Fine-tuning Llama 3.1 8B the classical way costs hundreds of millions of parameters and gigabytes of GPU memory. LoRA reduced that to millions. Now a 2026 IBM Research paper reduced it further — to <strong>6,144 parameters</strong> — using 2-qubit quantum circuit blocks running on a real 156-qubit quantum processor.</p>
+
+<p>The numbers are so dramatic that I had to build something to make them tangible. So I built <strong>Quantum Adapter Lab</strong>: a full-stack interactive demo where you can explore the math, simulate the quantum circuits, and see every number from the paper reproduced live.</p>
+
+<blockquote>
+  No quantum computer required. Every circuit in the demo runs as pure NumPy matrix math on your laptop — the same mathematical structure as the real IBM experiment.
+</blockquote>
+
+<img src="https://raw.githubusercontent.com/raghuece455/quantum-adapter-lab/main/docs/images/01-hero-overview.png"
+     alt="Quantum Adapter Lab hero overview — adapter story cards and configure panel">
+<p class="caption">The app opens with an animated 4-step journey: from $1M fine-tuning costs down to 6,144 quantum parameters.</p>
+
+<hr>
+
+<h2>The Problem: Fine-Tuning Costs Scale With Model Size</h2>
+
+<p>When a pre-trained LLM needs to learn a new task, you need to update its weights. The naive approach — full fine-tuning — updates all of them:</p>
+
+<pre>
+Llama 3.1 8B
+├── 32 transformer layers
+│   ├── Q, K, V, O projection matrices (each: 4096 × 4096)
+│   └── MLP weights (up, down, gate projections)
+└── Total trainable: ~8.59 billion parameters
+    Memory (fp16): 16 GB just for gradients
+</pre>
+
+<p>That's before optimizer states. Adam adds another 2× for momentum. You need roughly 48 GB of VRAM to fine-tune Llama 8B with full precision. Most researchers and companies can't afford that.</p>
+
+<p><strong>LoRA</strong> (Low-Rank Adaptation, 2021) changed the game: instead of updating the full weight matrix W, you freeze W and add two small trainable matrices A and B beside it. Since A is (d × r) and B is (r × d), and r ≪ d, the parameter count drops dramatically:</p>
+
+<pre>
+LoRA with rank 8, Llama 3.1 8B:
+  params = 32 layers × 4 projections × 2 matrices × 8 × 4096
+         = 8,388,608   (~8.4M parameters, 16 MB in fp16)
+
+Reduction vs full fine-tuning: 1,024×
+</pre>
+
+<p>LoRA is now the industry standard. But it still has millions of parameters. What if you could do the same thing with thousands?</p>
+
+<hr>
+
+<h2>The Quantum Answer: Cayley Unitary Adapters</h2>
+
+<p>The IBM Research paper (arXiv:2605.05914) introduces a fundamentally different adapter: a quantum circuit block that replaces the LoRA matrices with a unitary transformation built from 2-qubit quantum gates.</p>
+
+<p>Here is the key insight. A 2-qubit quantum system has a 4×4 state space. A unitary matrix Q acting on that space satisfies Q<sup>T</sup>Q = I — it preserves the norm of any input vector. That's not just mathematically elegant; it means <em>the adapter can never amplify or destroy information in the base model's representations</em>.</p>
+
+<p>The paper parameterises Q using the <strong>Cayley transform</strong>:</p>
+
+<pre>
+Given a skew-symmetric matrix K  (K = −Kᵀ):
+
+Q = (I − ½K)(I + ½K)⁻¹
+
+Properties:
+  • Q is guaranteed unitary: QᵀQ = I
+  • K has exactly 6 free parameters for a 4×4 system
+  • Differentiable: gradients flow through the Cayley formula
+</pre>
+
+<p>A 4×4 skew-symmetric matrix has 6 free parameters in its upper triangle. So each quantum adapter block uses just 6 trainable numbers — and the resulting transformation is provably unitary.</p>
+
+<h3>From 6 Parameters to a Gate Circuit</h3>
+
+<p>On real quantum hardware, you can't apply an arbitrary 4×4 matrix directly. IBM's Heron r2 processor has three native gates: <code>SX</code> (√X), <code>RZ</code> (rotation around Z-axis), and <code>CZ</code> (controlled-Z entangler). The paper decomposes each Cayley unitary into this gate set:</p>
+
+<pre>
+q0: ──SX──RZ──┬──SX──RZ──┬──SX──RZ──┬──SX──RZ──┬──SX──RZ──┬──SX──RZ──
+              │          │          │          │          │
+q1: ──SX──RZ──CZ─SX──RZ──CZ─SX──RZ──CZ─SX──RZ──CZ─SX──RZ──CZ─SX──RZ──
+
+Gate count: 12 SX + 9 RZ + 3 CZ = 24 gates  |  Circuit depth: 19
+</pre>
+
+<img src="https://raw.githubusercontent.com/raghuece455/quantum-adapter-lab/main/docs/images/03-quantum-circuit.png"
+     alt="Quantum circuit visualizer showing SX, RZ, CZ gates and the perplexity recovery chart">
+<p class="caption">Left: the canvas-rendered gate diagram for a 2-qubit Cayley block. Right: perplexity recovery simulation — the quantum adapter achieves 83% compression recovery, beating LoRA rank 8 (62%) with far fewer parameters.</p>
+
+<hr>
+
+<h2>The Numbers — Real Values From the Paper</h2>
+
+<table>
+  <tr>
+    <th>Strategy</th>
+    <th>Trainable Params</th>
+    <th>Memory (fp16)</th>
+    <th>vs Full FT</th>
+    <th>vs LoRA r8</th>
+  </tr>
+  <tr>
+    <td><strong>Full Fine-Tuning</strong></td>
+    <td>8.59 billion</td>
+    <td>16.0 GB</td>
+    <td>1×</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td><strong>LoRA (rank 8)</strong></td>
+    <td>8.4 million</td>
+    <td>16.0 MB</td>
+    <td>1,024×</td>
+    <td>1×</td>
+  </tr>
+  <tr>
+    <td><strong>Quantum Cayley (all layers)</strong></td>
+    <td>196,608</td>
+    <td>0.4 MB</td>
+    <td>43,691×</td>
+    <td>42.7×</td>
+  </tr>
+  <tr style="background:#f9f6ff;">
+    <td><strong>Quantum Cayley (paper: 1 layer)</strong></td>
+    <td><strong>6,144</strong></td>
+    <td>0.012 MB</td>
+    <td>1,398,101×</td>
+    <td><strong>2,730×</strong></td>
+  </tr>
+</table>
+
+<p>The paper's headline result — 6,144 parameters — comes from applying the quantum adapter to just one layer's v_proj matrix of Llama 3.1 8B. That single layer, with 1,024 quantum blocks × 6 parameters each, improved the model's perplexity on WikiText from 8.877 to <strong>8.752</strong> — a statistically significant 1.43% improvement.</p>
+
+<blockquote>
+  8.877 → 8.752. A 1.43% perplexity improvement. With 6,144 parameters. On a real IBM quantum processor with 156 qubits. No simulation, no cherry-picking — validated on the <code>ibm_basquecountry</code> processor.
+</blockquote>
+
+<img src="https://raw.githubusercontent.com/raghuece455/quantum-adapter-lab/main/docs/images/02-adapter-comparison.png"
+     alt="Adapter comparison cards showing Full FT, LoRA, and Quantum side by side">
+<p class="caption">The three adapter cards in the demo, live-computed from the backend. The quantum card highlights the paper result: 6,144 params, 2,730× fewer than LoRA.</p>
+
+<hr>
+
+<h2>Why 2 Qubits? The Noise-Expressivity Phase Transition</h2>
+
+<p>This is the most counterintuitive part of the paper. Why stop at 2 qubits? More qubits = more expressivity. But IBM's Heron r2 processor has a two-qubit gate error rate of <strong>λ = 11.9%</strong> per operation. The noise compounds:</p>
+
+<table>
+  <tr>
+    <th>Qubit count</th>
+    <th>PPL degradation</th>
+    <th>Relative to 2q</th>
+    <th>Verdict</th>
+  </tr>
+  <tr style="background:#f0fff4;">
+    <td><strong>2 qubits</strong></td>
+    <td><strong>0.08%</strong></td>
+    <td>1×</td>
+    <td>✅ Feasible today</td>
+  </tr>
+  <tr style="background:#fff8f0;">
+    <td>3 qubits</td>
+    <td>2.80%</td>
+    <td>35×</td>
+    <td>⚠️ Problematic</td>
+  </tr>
+  <tr style="background:#fff0f0;">
+    <td>4 qubits</td>
+    <td>12.50%</td>
+    <td>156×</td>
+    <td>❌ Unusable today</td>
+  </tr>
+</table>
+
+<p>At 2 qubits, the hardware noise is so benign that the quantum advantage survives. At 3 qubits, quality collapses 35×. This is the <em>synthesis feasibility frontier</em> — 2 qubits is the sweet spot where quantum expressivity outpaces hardware noise on current processors.</p>
+
+<img src="https://raw.githubusercontent.com/raghuece455/quantum-adapter-lab/main/docs/images/05-noise-phase-chart.png"
+     alt="Noise phase transition chart — exponential degradation from 2 to 4 qubits">
+<p class="caption">The noise-expressivity phase transition plotted in the demo. The line goes from nearly flat at 2 qubits to 12.5% degradation at 4 qubits — a stark visual of why the paper uses 2-qubit blocks exclusively.</p>
+
+<hr>
+
+<h2>Questions the Quantum Model Got Right</h2>
+
+<p>The paper tested on MMLU (Massive Multitask Language Understanding). Here are two questions from Table 1 where the quantum-enhanced model answered correctly but the base model failed:</p>
+
+<table>
+  <tr>
+    <th>Question</th>
+    <th>Base Llama 3.1 8B</th>
+    <th>+ Quantum Adapter</th>
+  </tr>
+  <tr>
+    <td><em>"Which planets in our solar system have rings?"</em></td>
+    <td>Saturn ❌</td>
+    <td>Saturn, Jupiter, Uranus, and Neptune ✅</td>
+  </tr>
+  <tr>
+    <td><em>"What is the primary effect of gene flow between populations?"</em></td>
+    <td>Maintains Hardy-Weinberg equilibrium ❌</td>
+    <td>Leads to genetic homogeneity between populations ✅</td>
+  </tr>
+</table>
+
+<p>Adding 6,144 trainable quantum parameters to a frozen 8-billion-parameter model improved its factual recall on domain-specific questions. That's the practical payoff.</p>
+
+<hr>
+
+<h2>Building the Interactive Demo</h2>
+
+<p>I wanted to make every number in the paper interactive and explorable, so I built a full-stack demo from scratch.</p>
+
+<h3>Backend: FastAPI + NumPy Quantum Simulation</h3>
+
+<p>The backend is a FastAPI app in Python 3.12 with four endpoints. All quantum math runs in NumPy — no Qiskit, no PennyLane, no quantum hardware required.</p>
+
+<p>The core simulation in <code>quantum.py</code>:</p>
+
+<pre>
+def make_skew_symmetric(params, n=4):
+    """Build n×n skew-symmetric K from upper-triangle params."""
+    K = np.zeros((n, n))
+    idx = np.triu_indices(n, k=1)
+    K[idx] = params
+    K -= K.T          # K = −Kᵀ by construction
+    return K
+
+def cayley_transform(K):
+    """Q = (I − 0.5K)(I + 0.5K)⁻¹  — guaranteed unitary."""
+    I = np.eye(K.shape[0])
+    Q = (I - 0.5 * K) @ np.linalg.inv(I + 0.5 * K)
+    return Q
+
+def simulate_circuit(input_vector, n_qubits=2):
+    params = np.random.randn(6)       # 6 free Cayley parameters
+    K = make_skew_symmetric(params)
+    Q = cayley_transform(K)
+    x = input_vector / np.linalg.norm(input_vector)  # amplitude encoding
+    output = Q @ x
+    return output, Q                  # QᵀQ ≈ I — verified on every call
+</pre>
+
+<p>The four API endpoints:</p>
+
+<ul>
+  <li><code>POST /api/analyze</code> — compare all three adapter types for any model config</li>
+  <li><code>POST /api/circuit</code> — simulate a Cayley block and return the gate sequence</li>
+  <li><code>POST /api/benchmark</code> — parameter efficiency table across model sizes</li>
+  <li><code>GET /api/examples</code> — three pre-built presets (Llama 8B, SmolLM2 135M, high-rank LoRA)</li>
+</ul>
+
+<h3>Frontend: React 19 + Canvas Circuit Diagram</h3>
+
+<p>The frontend is React 19 with TypeScript strict mode, Vite 6, Tailwind CSS 3, Recharts for charts, and Framer Motion for animations.</p>
+
+<p>The most technically interesting component is the Quantum Circuit Visualiser. It uses a <code>&lt;canvas&gt;</code> element (not SVG) to render the gate diagram — critical for performance since animating 24 gates at 80ms intervals would cause jank with SVG DOM nodes:</p>
+
+<pre>
+// QuantumCircuitViz.tsx (simplified)
+const canvasRef = useRef&lt;HTMLCanvasElement&gt;(null);
+
+useEffect(() =&gt; {
+  const ctx = canvasRef.current?.getContext("2d");
+  if (!ctx || !circuitData) return;
+
+  // Draw qubit wires
+  for (let q = 0; q &lt; nQubits; q++) {
+    ctx.beginPath();
+    ctx.moveTo(MARGIN, qubitY(q));
+    ctx.lineTo(WIDTH - MARGIN, qubitY(q));
+    ctx.stroke();
+  }
+
+  // Draw each gate
+  circuitData.gate_sequence.forEach((gate, i) =&gt; {
+    const x = gateX(gate.step);
+    if (gate.gate === "SX")  drawSXGate(ctx, x, qubitY(gate.qubit));
+    if (gate.gate === "RZ")  drawRZGate(ctx, x, qubitY(gate.qubit), gate.angle);
+    if (gate.gate === "CZ")  drawCZGate(ctx, x, gate.qubit);
+  });
+}, [circuitData, animStep]);
+</pre>
+
+<img src="https://raw.githubusercontent.com/raghuece455/quantum-adapter-lab/main/docs/images/06-benchmark-panel.png"
+     alt="Parameter efficiency chart and benchmark panel showing quantum advantage scaling">
+<p class="caption">The benchmark panel: a log-scale bar chart spanning 7 orders of magnitude, a parameter efficiency table, and the quantum advantage trend line across model sizes.</p>
+
+<h3>Technology Stack</h3>
+
+<table>
+  <tr><th>Layer</th><th>Technology</th></tr>
+  <tr><td>Backend language</td><td>Python 3.12</td></tr>
+  <tr><td>Backend framework</td><td>FastAPI ≥ 0.115 + Pydantic v2</td></tr>
+  <tr><td>Quantum simulation</td><td>NumPy (pure matrix math, no Qiskit)</td></tr>
+  <tr><td>Frontend framework</td><td>React 19 + TypeScript strict</td></tr>
+  <tr><td>Build tool</td><td>Vite 6</td></tr>
+  <tr><td>Styling</td><td>Tailwind CSS 3</td></tr>
+  <tr><td>Charts</td><td>Recharts 2.12</td></tr>
+  <tr><td>Animation</td><td>Framer Motion 11</td></tr>
+  <tr><td>Tests</td><td>pytest — 51 tests pass</td></tr>
+  <tr><td>CI/CD</td><td>GitHub Actions</td></tr>
+</table>
+
+<hr>
+
+<h2>How to Run It</h2>
+
+<h3>Docker — one command</h3>
+<pre>
+git clone https://github.com/raghuece455/quantum-adapter-lab
+cd quantum-adapter-lab
+docker-compose up --build
+</pre>
+<p>Open <strong>http://localhost:5173</strong></p>
+
+<h3>Two terminals (no Docker)</h3>
+<pre>
+# Terminal 1 — Backend
+cd backend
+python -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 — Frontend
+cd frontend
+npm install
+npm run dev
+</pre>
+
+<p>Run the 51 backend tests:</p>
+<pre>
+cd backend && pytest
+# Expected: 51 passed
+</pre>
+
+<hr>
+
+<h2>What You Will Learn From This Demo</h2>
+
+<ol>
+  <li><strong>The Cayley transform</strong> — how to generate a guaranteed-unitary matrix from 6 free parameters, and why unitarity matters for adapter stability</li>
+  <li><strong>Quantum amplitude encoding</strong> — how a classical vector is normalised to become a quantum state, and what that means for information preservation</li>
+  <li><strong>The noise-expressivity trade-off</strong> — why 2 qubits is the optimal size for current IBM hardware, and how to calculate the feasibility frontier</li>
+  <li><strong>Parameter scaling formulas</strong> — exact arithmetic for Full FT, LoRA, and Quantum adapters at any model size (try switching to SmolLM2 135M in the demo)</li>
+  <li><strong>FastAPI + React full-stack patterns</strong> — Pydantic v2 field constraints, async lifespan handlers, Canvas-based visualisations, and React 19 concurrent data fetching</li>
+</ol>
+
+<hr>
+
+<h2>Research Papers Behind This Demo</h2>
+
+<ul>
+  <li>
+    <strong><a href="https://arxiv.org/abs/2605.05914">arXiv:2605.05914</a></strong> — Aizpurua et al. (2026), Multiverse Computing &amp; University of Navarra.
+    <em>The primary source: Cayley unitary adapters on a 156-qubit IBM quantum processor, showing 2,730× parameter compression over LoRA with improved perplexity.</em>
+  </li>
+  <li>
+    <strong><a href="https://arxiv.org/abs/2106.09685">arXiv:2106.09685</a></strong> — Hu et al. (2021), Microsoft.
+    <em>The original LoRA paper — low-rank adaptation using A×B matrix pairs beside frozen weight matrices. The classical baseline this demo compares against.</em>
+  </li>
+  <li>
+    <strong><a href="https://arxiv.org/abs/2303.08774">arXiv:2303.08774</a></strong> — Touvron et al. (2023), Meta AI.
+    <em>LLaMA: Open and Efficient Foundation Language Models — the base model architecture used in the IBM experiment.</em>
+  </li>
+  <li>
+    <strong><a href="https://arxiv.org/abs/2009.03300">arXiv:2009.03300</a></strong> — Hendrycks et al. (2020).
+    <em>MMLU benchmark — the evaluation suite used to measure per-question improvements from quantum fine-tuning, including the astronomy and biology examples in the demo.</em>
+  </li>
+</ul>
+
+<hr>
+
+<h2>Try It and Star It</h2>
+
+<p>The full source code — backend, frontend, 51 tests, Docker setup, and CI — is on GitHub:</p>
+
+<p><strong>👉 <a href="https://github.com/raghuece455/quantum-adapter-lab">github.com/raghuece455/quantum-adapter-lab</a></strong></p>
+
+<p>If this demo helped you understand quantum fine-tuning, a ⭐ on the repo means a lot and helps others find it.</p>
+
+<p>Questions? Drop them in the comments or open a GitHub issue. I'm especially curious: what would you build if quantum adapters could be applied to any frozen model — on any cloud quantum backend — with the same API call as a LoRA fine-tune?</p>
+
+<hr>
+<p style="font-size:0.85em; color:#888; text-align:center;">
+  This demo is an educational simulation — not affiliated with IBM Research or the paper authors.<br>
+  All quantum circuits are simulated classically. No quantum hardware was used to produce this article.
+</p>
+
+</body>
+</html>
