@@ -32,7 +32,20 @@ Real paper results used throughout:
 
 ## Screenshots
 
-*(Add screenshots to `docs/images/` after first run)*
+**Hero — Adapter Story & Configure panel**
+![Hero overview](docs/images/01-hero-overview.png)
+
+**Adapter Comparison — Full FT vs LoRA vs Quantum Cayley**
+![Adapter comparison](docs/images/02-adapter-comparison.png)
+
+**Quantum Circuit Visualiser + Paper Results**
+![Quantum circuit](docs/images/03-quantum-circuit.png)
+
+**Noise-Expressivity Phase Transition (2q → 3q → 4q)**
+![Noise phase chart](docs/images/05-noise-phase-chart.png)
+
+**Parameter Efficiency & Benchmark Panel**
+![Benchmark panel](docs/images/06-benchmark-panel.png)
 
 ---
 
